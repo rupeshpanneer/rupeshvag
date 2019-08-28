@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# Copy encrypted or unencrypted DBSnapshots to an encrypted DBSnapshot in a different region
+#
+
+aws_profile="" 
+aws_source_region="" 
+aws_dest_region="" 
+aws_kms_key_id="" #destination kms key ID 
+num=1
+
+aws --profile "${aws_profile}" --region "${aws_source_region}" rds describe-db-snapshots \
+  --query 'DBSnapshots[*].[DBSnapshotArn,Encrypted]' \  
+  --output text > rds-snapshots-list.txt
+
+echo "Encrypted snapshots" 
+awk '{IGNORECASE=1}{if ($2 == "True") print}' rds-snapshots-list.txt #Show list of encrypted snapshots 
+echo "Unencrypted snapshots" 
+awk '{IGNORECASE=1}{if ($2 == "False") print}' rds-snapshots-list.txt #Show list of unencrypted snapshots
+
+IFS=$'\n' read -d '' -r -a rds_list_lines < rds-snapshots-list.txt #Move txt file content into an array
+echo "Copying encrypted snapshots from ${aws_source_region} to ${aws_dest_region}" 
+for i in "${rds_list_lines[@]}"; do #Loop through array   
+if [[ "${i}" == *"True"* ]]; then #Check for encrypted rds snapshot & if true copy snapshot
+    source_snapshot_ident="$( echo "${i}" | sed 's/[[:blank:]]True.*//')" #Remove all spaces tabs and the word true
+    target_snapshot_ident="$( echo "$source_snapshot_ident" | sed 's/.*:snapshot:rds:.//')snapshotcopy$num" #Name of target snapshot with incrementing number
+    ((num++))
+
+    aws --profile "${aws_profile}" --region "${aws_dest_region}" rds copy-db-snapshot \
+      --source-db-snapshot-identifier "${source_snapshot_ident}" \
+      --target-db-snapshot-identifier "${target_snapshot_ident}" \
+      --source-region "${aws_source_region}" \
+      --kms-key-id "${aws_kms_key_id}"   
+fi 
+done
